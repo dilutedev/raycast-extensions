@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adminItemTitle, formatLocalDate, formatTotals, planningRows, requestRef, windowStart } from "./formatting";
+import { adminItemTitle, formatLocalDate, formatTotals, planningRows, windowStart } from "./formatting";
 import type { DigestTotals, Issue } from "./kata";
 
 describe("formatLocalDate", () => {
@@ -25,23 +25,6 @@ describe("windowStart", () => {
     const now = new Date("2026-11-08T10:30:15.123Z");
     expect(windowStart(24, now)).toBe("2026-11-07T10:30:15Z");
     expect(windowStart(168, now)).toBe("2026-11-01T10:30:15Z");
-  });
-});
-
-describe("requestRef", () => {
-  it("prefers a qualified id", () => {
-    expect(requestRef({ qualified_id: "p#abcd", short_id: "zzzz", project: "q" })).toBe("p#abcd");
-  });
-
-  it("builds a qualified ref from project and short id", () => {
-    expect(requestRef({ project_name: "p", short_id: "abcd" })).toBe("p#abcd");
-    expect(requestRef({ project: "p", short_id: "abcd" })).toBe("p#abcd");
-    expect(requestRef({ project_name: "p", issue_short_id: "abcd" })).toBe("p#abcd");
-  });
-
-  it("accepts an issue field only when it is qualified", () => {
-    expect(requestRef({ issue: "p#abcd" })).toBe("p#abcd");
-    expect(requestRef({ issue: "abcd" })).toBeUndefined();
   });
 });
 

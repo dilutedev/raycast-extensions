@@ -1,8 +1,14 @@
 import { Action, ActionPanel, Color, Icon, Keyboard, List } from "@raycast/api";
-import { useCachedPromise } from "@raycast/utils";
 import { useMemo, useState } from "react";
 import { listLabelCounts, listProjects, listRecentCloses, showDigest } from "./kata";
 import { formatTotals, windowStart } from "./formatting";
+import {
+  ConnectionActions,
+  ConnectionGate,
+  connectionTitle,
+  useActiveConnection,
+  useKataPromise,
+} from "./connection-ui";
 
 const WINDOWS = {
   "24h": { title: "Last 24 Hours", hours: 24 },
@@ -11,19 +17,20 @@ const WINDOWS = {
 
 type WindowKey = keyof typeof WINDOWS;
 
-export default function Command() {
+function ActivityContent() {
+  const { connection } = useActiveConnection();
   const [project, setProject] = useState("all");
   const [window, setWindow] = useState<WindowKey>("24h");
-  const projects = useCachedPromise(listProjects);
+  const projects = useKataPromise(listProjects, []);
   const projectId = projects.data?.find((p) => p.name === project)?.id;
   const specificProject = project !== "all";
   const closesSince = useMemo(() => windowStart(WINDOWS[window].hours, new Date()), [window]);
 
-  const digest = useCachedPromise(showDigest, [window, projectId], {
+  const digest = useKataPromise(showDigest, [window, projectId], {
     execute: !specificProject || projectId !== undefined,
   });
-  const closes = useCachedPromise(listRecentCloses, [project, closesSince], { execute: specificProject });
-  const labels = useCachedPromise(listLabelCounts, [project], { execute: specificProject });
+  const closes = useKataPromise(listRecentCloses, [project, closesSince], { execute: specificProject });
+  const labels = useKataPromise(listLabelCounts, [project], { execute: specificProject });
   const refresh = () => {
     digest.revalidate();
     closes.revalidate();
@@ -45,11 +52,13 @@ export default function Command() {
         shortcut={Keyboard.Shortcut.Common.Refresh}
         onAction={refresh}
       />
+      <ConnectionActions />
     </ActionPanel>
   );
 
   return (
     <List
+      navigationTitle={connectionTitle(connection)}
       isLoading={projects.isLoading || digest.isLoading || closes.isLoading || labels.isLoading}
       isShowingDetail
       searchBarAccessory={
@@ -140,5 +149,13 @@ export default function Command() {
         </List.Section>
       )}
     </List>
+  );
+}
+
+export default function Command() {
+  return (
+    <ConnectionGate>
+      <ActivityContent />
+    </ConnectionGate>
   );
 }

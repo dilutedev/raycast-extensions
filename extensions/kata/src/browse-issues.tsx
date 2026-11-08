@@ -13,8 +13,14 @@ import {
   showToast,
   useNavigation,
 } from "@raycast/api";
-import { useCachedPromise } from "@raycast/utils";
 import { Fragment, useMemo, useState } from "react";
+import {
+  ConnectionActions,
+  ConnectionGate,
+  connectionTitle,
+  useActiveConnection,
+  useKataPromise,
+} from "./connection-ui";
 import {
   Attention,
   Comment,
@@ -424,7 +430,7 @@ function NotifyForm({ issue, revalidate }: { issue: Issue; revalidate: () => voi
 
 function MoveForm({ issue, revalidate }: { issue: Issue; revalidate: () => void }) {
   const { pop } = useNavigation();
-  const { data: projects, isLoading } = useCachedPromise(listProjects);
+  const { data: projects, isLoading } = useKataPromise(listProjects, []);
   return (
     <Form
       isLoading={isLoading}
@@ -593,7 +599,7 @@ function AddRelationForm({
   onChange: () => void;
 }) {
   const { pop } = useNavigation();
-  const { data: candidates, isLoading } = useCachedPromise(listProjectIssues, [projectOf(issueRef)]);
+  const { data: candidates, isLoading } = useKataPromise(listProjectIssues, [projectOf(issueRef)]);
   const [kind, setKind] = useState<EditableRelationKind>("blocked-by");
   const [targetError, setTargetError] = useState<string>();
   return (
@@ -724,8 +730,8 @@ export function IssueView({
   titles: ReadonlyMap<string, string>;
   onChange: () => void;
 }) {
-  const { data, isLoading, revalidate } = useCachedPromise(showIssue, [issueRef]);
-  const planningDates = useCachedPromise(showPlanningDates, [issueRef]);
+  const { data, isLoading, revalidate } = useKataPromise(showIssue, [issueRef]);
+  const planningDates = useKataPromise(showPlanningDates, [issueRef]);
   const relations = data ? groupRelations(data, titles) : [];
   const detailIssue = data && { ...data.issue, qualified_id: issueRef, project_name: projectOf(issueRef) };
   const planning = detailIssue ? planningRows(detailIssue, planningDates.data) : [];
@@ -787,17 +793,22 @@ function IssueDetail({
 }
 
 export default function Command() {
-  return <IssueList />;
+  return (
+    <ConnectionGate>
+      <IssueList />
+    </ConnectionGate>
+  );
 }
 
 function IssueList({ parent }: { parent?: Issue }) {
+  const { connection } = useActiveConnection();
   const [status, setStatus] = useState<Status>("open");
   const [project, setProject] = useState("all");
   const [searchText, setSearchText] = useState("");
-  const { data, isLoading, revalidate } = useCachedPromise(listIssues, [status]);
+  const { data, isLoading, revalidate } = useKataPromise(listIssues, [status]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const show = useCachedPromise(showIssue, [selectedId ?? ""], { execute: !!selectedId });
-  const planningDates = useCachedPromise(showPlanningDates, [selectedId ?? ""], { execute: !!selectedId });
+  const show = useKataPromise(showIssue, [selectedId ?? ""], { execute: !!selectedId });
+  const planningDates = useKataPromise(showPlanningDates, [selectedId ?? ""], { execute: !!selectedId });
   const changed = () => {
     revalidate();
     show.revalidate();
@@ -814,7 +825,7 @@ function IssueList({ parent }: { parent?: Issue }) {
 
   return (
     <List
-      navigationTitle={parent ? `Children of ${parent.qualified_id}` : undefined}
+      navigationTitle={connectionTitle(connection, parent ? `Children of ${parent.qualified_id}` : "Kata")}
       isLoading={isLoading}
       isShowingDetail
       onSelectionChange={setSelectedId}
@@ -991,6 +1002,7 @@ function IssueList({ parent }: { parent?: Issue }) {
                 shortcut={Keyboard.Shortcut.Common.Refresh}
                 onAction={revalidate}
               />
+              {!parent && <ConnectionActions />}
             </ActionPanel>
           }
         />

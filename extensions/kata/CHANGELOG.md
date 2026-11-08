@@ -8,4 +8,5 @@
 - Browse Issues: drill into child issues, create child issues, and set deadline, schedule and attention, notify, move to another project and delete (with confirmation)
 - Browse Issues: show deadline, scheduled and attention values in the detail pane
 - Inbox, Ready Issues, Search Issues, Activity and Kata Admin commands
-- Preferences for a remote kata server: Server URL, Auth Token and Actor
+- Talks to the kata daemon over its HTTP API, so no local kata install is needed
+- Manage Connections command: save several kata servers (name, URL, optional auth token, optional actor), test them and switch the active one from any command

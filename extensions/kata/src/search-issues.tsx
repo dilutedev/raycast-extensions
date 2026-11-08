@@ -1,19 +1,26 @@
 import { Action, ActionPanel, Color, Icon, List } from "@raycast/api";
-import { useCachedPromise } from "@raycast/utils";
 import { useState } from "react";
 import { listProjects, restoreIssue, searchIssues } from "./kata";
 import { IssueView, run } from "./browse-issues";
+import {
+  ConnectionActions,
+  ConnectionGate,
+  connectionTitle,
+  useActiveConnection,
+  useKataPromise,
+} from "./connection-ui";
 
 type SearchStatus = "open" | "closed" | "all";
 
-export default function Command() {
+function SearchContent() {
+  const { connection } = useActiveConnection();
   const [searchText, setSearchText] = useState("");
   const [project, setProject] = useState("");
   const [status, setStatus] = useState<SearchStatus>("all");
   const [includeDeleted, setIncludeDeleted] = useState(false);
-  const projects = useCachedPromise(listProjects);
+  const projects = useKataPromise(listProjects, []);
   const query = searchText.trim();
-  const results = useCachedPromise(searchIssues, [query, project, status, includeDeleted], {
+  const results = useKataPromise(searchIssues, [query, project, status, includeDeleted], {
     execute: query !== "" && project !== "",
     keepPreviousData: true,
   });
@@ -21,6 +28,7 @@ export default function Command() {
 
   return (
     <List
+      navigationTitle={connectionTitle(connection)}
       isLoading={projects.isLoading || results.isLoading}
       filtering={false}
       throttle
@@ -111,11 +119,20 @@ export default function Command() {
                     ))}
                   </ActionPanel.Submenu>
                 </ActionPanel.Section>
+                <ConnectionActions />
               </ActionPanel>
             }
           />
         );
       })}
     </List>
+  );
+}
+
+export default function Command() {
+  return (
+    <ConnectionGate>
+      <SearchContent />
+    </ConnectionGate>
   );
 }

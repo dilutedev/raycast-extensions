@@ -2,6 +2,7 @@ import { Action, ActionPanel, Form, Icon, Toast, open, popToRoot, showToast, use
 import { useCachedPromise, useLocalStorage } from "@raycast/utils";
 import { useEffect, useState } from "react";
 import { createIssue, listProjectIssues, listProjects } from "./kata";
+import { ConnectionGate, useActiveConnection } from "./connection-ui";
 
 interface Values {
   project: string;
@@ -15,7 +16,11 @@ interface Values {
 }
 
 export default function Command() {
-  return <CreateIssueForm />;
+  return (
+    <ConnectionGate>
+      <CreateIssueForm />
+    </ConnectionGate>
+  );
 }
 
 export function CreateIssueForm({
@@ -28,7 +33,14 @@ export function CreateIssueForm({
   onCreated?: () => void;
 }) {
   const { pop } = useNavigation();
-  const { data: projects, isLoading } = useCachedPromise(listProjects);
+  const { connections, connection: activeConnection } = useActiveConnection();
+  const [connectionId, setConnectionId] = useState<string>();
+  const selectedConnection = connections.find((candidate) => candidate.id === connectionId) ?? activeConnection;
+  const { data: projects, isLoading } = useCachedPromise(
+    (id: string) => listProjects(connections.find((candidate) => candidate.id === id)),
+    [selectedConnection?.id ?? ""],
+    { execute: !!selectedConnection },
+  );
   const {
     value: lastProject,
     setValue: setLastProject,
@@ -40,15 +52,23 @@ export function CreateIssueForm({
   const [titleError, setTitleError] = useState<string>();
 
   const { data: candidates, isLoading: isLoadingCandidates } = useCachedPromise(
-    listProjectIssues,
-    [project as string],
-    { execute: !!project },
+    (_connectionId: string, projectName: string) => listProjectIssues(projectName, selectedConnection),
+    [selectedConnection?.id ?? "", project as string],
+    { execute: !!project && !!selectedConnection },
   );
 
   useEffect(() => {
     if (project !== undefined || !projects?.length || isLoadingLastProject) return;
     setProject(projects.some((p) => p.name === lastProject) ? lastProject : projects[0].name);
   }, [projects, lastProject, isLoadingLastProject, project]);
+
+  function changeConnection(value: string) {
+    if (value === selectedConnection?.id) return;
+    setConnectionId(value);
+    setProject(undefined);
+    setParent("");
+    setBlockedBy([]);
+  }
 
   function changeProject(value: string) {
     if (project === undefined || value === project) return;
@@ -68,18 +88,23 @@ export function CreateIssueForm({
       .map((l) => l.trim())
       .filter(Boolean);
     let uid: string;
+    let webUrl: string | undefined;
     try {
-      const res = await createIssue({
-        project: values.project,
-        title: values.title,
-        body: values.body,
-        priority: values.priority,
-        labels,
-        owner: values.owner.trim(),
-        parent,
-        blockedBy,
-      });
+      const res = await createIssue(
+        {
+          project: values.project,
+          title: values.title,
+          body: values.body,
+          priority: values.priority,
+          labels,
+          owner: values.owner.trim(),
+          parent,
+          blockedBy,
+        },
+        selectedConnection,
+      );
       uid = res.issue.uid;
+      webUrl = res.web_url;
     } catch (e) {
       toast.style = Toast.Style.Failure;
       toast.title = "Failed to create issue";
@@ -90,10 +115,10 @@ export function CreateIssueForm({
     toast.style = Toast.Style.Success;
     toast.title = "Issue created";
     if (openInBrowser) {
-      // The create response carries no web_url; only list does.
       try {
-        const created = (await listProjectIssues(values.project)).find((i) => i.uid === uid);
-        if (created) await open(created.web_url);
+        const url =
+          webUrl ?? (await listProjectIssues(values.project, selectedConnection)).find((i) => i.uid === uid)?.web_url;
+        if (url) await open(url);
       } catch (e) {
         await showToast({
           style: Toast.Style.Failure,
@@ -124,6 +149,16 @@ export function CreateIssueForm({
         </ActionPanel>
       }
     >
+      <Form.Dropdown
+        id="connection"
+        title="Connection"
+        value={selectedConnection?.id ?? ""}
+        onChange={changeConnection}
+      >
+        {connections.map((candidate) => (
+          <Form.Dropdown.Item key={candidate.id} value={candidate.id} title={candidate.name} />
+        ))}
+      </Form.Dropdown>
       <Form.Dropdown id="project" title="Project" value={project ?? ""} onChange={changeProject}>
         {project !== undefined &&
           projects?.map((p) => <Form.Dropdown.Item key={p.name} value={p.name} title={p.name} />)}

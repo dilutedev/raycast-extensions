@@ -2,17 +2,27 @@
 
 Browse, filter, create and manage issues in [kata](https://katatracker.com), the local-first issue tracker for humans and coding agents.
 
-## Requirements
+## Setup
 
-This extension drives the `kata` command-line tool, so it must be installed first:
+The extension talks to the kata daemon's HTTP API directly, so kata does not need to be installed on your Mac. On first launch, any command shows the **Add Connection** form. Fill in:
+
+- **Name**: a label for this server, for example `Personal`.
+- **Server URL**: the address of the kata daemon, for example `http://100.x.y.z:7777` over Tailscale.
+- **Auth Token** (optional): leave it empty if the daemon allows tokenless private-network access (`allow_unauthenticated_private_network_writes = true`). Otherwise use an identity token, created on the server with:
 
 ```sh
-brew install kata
+kata tokens create --actor <name> --name <label>
 ```
 
-Kata runs a local daemon that the CLI talks to. If commands fail with a connection error, start it with `kata daemon start`.
+- **Actor** (optional): set it when you connect without a token, because the daemon then records changes under this name. With a token it is only needed if the server does not report the token's actor. It is used for the Inbox recipient, the sender of Notify requests, Clear Request and as the author of changes.
 
-By default the extension uses `/opt/homebrew/bin/kata` (Apple silicon Homebrew). On an Intel Mac, or if you installed kata elsewhere, set the **Kata Binary** preference to the path printed by `which kata`. Leaving it empty uses `kata` from your `PATH`.
+The connection is tested before it is saved. **Save Without Testing** skips the check.
+
+### Multiple connections
+
+You can save several connections, for example your own server and a team's server, and use one at a time. The first connection you add becomes active. Switch with **Switch Connection** in any command's action panel (`⌘⌃S`), or from **Manage Connections**, where you can also add, edit, test and delete connections. Each command shows the active connection in its title, and data is never shared between connections.
+
+Connections, including auth tokens, are stored in Raycast's local storage on your Mac.
 
 ## Commands
 
@@ -46,25 +56,10 @@ Full-text search over titles, bodies and comments in the project chosen in the d
 
 Digest of what changed in the last 24 hours or 7 days (switch with **Show Last 7 Days**), per-actor summaries, and, when a single project is selected, its recent closes and label counts.
 
+### Manage Connections
+
+Add, edit, test, delete and switch between saved kata servers.
+
 ### Kata Admin
 
 Read-only views of cron jobs, runs and workflows (per project), teams, tokens, your identity and daemon health. Items are shown as JSON.
-
-## Remote Server
-
-To use a kata daemon on another machine (for example over Tailscale), create an identity token on the server:
-
-```sh
-kata tokens create --actor <name> --name macbook
-```
-
-Then set **Server URL** (for example `http://100.x.y.z:7777`) and **Auth Token** in the extension preferences. **Actor** optionally sets the author of your changes and which inbox is shown. Leave all three empty to use the local daemon.
-
-## Preferences
-
-| Preference | Description |
-| --- | --- |
-| Kata Binary | Path to the kata executable. Defaults to `/opt/homebrew/bin/kata`; leave empty to use `kata` from your `PATH`. |
-| Server URL | Remote kata daemon URL, passed to kata as `KATA_SERVER`. Leave empty for the local daemon. |
-| Auth Token | Identity token for the remote daemon, passed as `KATA_AUTH_TOKEN`. |
-| Actor | Your actor name, passed as `KATA_AUTHOR`. |

@@ -1,8 +1,14 @@
 import { Action, ActionPanel, Icon, Keyboard, List } from "@raycast/api";
-import { useCachedPromise } from "@raycast/utils";
 import { useState } from "react";
 import { AdminView, healthCheck, listAdminItems, listProjects, whoAmI } from "./kata";
 import { adminItemTitle, jsonMarkdown } from "./formatting";
+import {
+  ConnectionActions,
+  ConnectionGate,
+  connectionTitle,
+  useActiveConnection,
+  useKataPromise,
+} from "./connection-ui";
 
 type View = AdminView | "identity";
 
@@ -23,17 +29,18 @@ async function loadIdentity() {
   ];
 }
 
-export default function Command() {
+function AdminContent() {
+  const { connection } = useActiveConnection();
   const [view, setView] = useState<View>("cron-jobs");
   const [selectedProject, setSelectedProject] = useState<string>();
-  const projects = useCachedPromise(listProjects);
+  const projects = useKataPromise(listProjects, []);
   const project = selectedProject ?? projects.data?.[0]?.name;
   const needsProject = view.startsWith("cron-");
 
-  const items = useCachedPromise(listAdminItems, [view as AdminView, project ?? ""], {
+  const items = useKataPromise(listAdminItems, [view as AdminView, project ?? ""], {
     execute: view !== "identity" && (!needsProject || !!project),
   });
-  const identity = useCachedPromise(loadIdentity, [], { execute: view === "identity" });
+  const identity = useKataPromise(loadIdentity, [], { execute: view === "identity" });
   const isLoading = projects.isLoading || items.isLoading || identity.isLoading;
   const rows =
     view === "identity"
@@ -55,6 +62,7 @@ export default function Command() {
 
   return (
     <List
+      navigationTitle={connectionTitle(connection)}
       isLoading={isLoading}
       isShowingDetail
       searchBarAccessory={
@@ -69,7 +77,12 @@ export default function Command() {
         icon={Icon.Info}
         title={`No ${viewTitle}`}
         description={needsProject ? `Project: ${project}` : undefined}
-        actions={<ActionPanel>{projectPicker}</ActionPanel>}
+        actions={
+          <ActionPanel>
+            {projectPicker}
+            <ConnectionActions />
+          </ActionPanel>
+        }
       />
       <List.Section title={viewTitle} subtitle={needsProject ? project : undefined}>
         {rows.map((row, index) => (
@@ -90,11 +103,20 @@ export default function Command() {
                     identity.revalidate();
                   }}
                 />
+                <ConnectionActions />
               </ActionPanel>
             }
           />
         ))}
       </List.Section>
     </List>
+  );
+}
+
+export default function Command() {
+  return (
+    <ConnectionGate>
+      <AdminContent />
+    </ConnectionGate>
   );
 }

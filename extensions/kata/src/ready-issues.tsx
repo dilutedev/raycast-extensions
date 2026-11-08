@@ -1,11 +1,18 @@
 import { Action, ActionPanel, Color, Icon, Keyboard, List } from "@raycast/api";
-import { useCachedPromise } from "@raycast/utils";
 import { Issue, claimIssue, listReadyIssues, nextIssue } from "./kata";
 import { IssueView, run } from "./browse-issues";
+import {
+  ConnectionActions,
+  ConnectionGate,
+  connectionTitle,
+  useActiveConnection,
+  useKataPromise,
+} from "./connection-ui";
 
-export default function Command() {
-  const ready = useCachedPromise(listReadyIssues);
-  const next = useCachedPromise(nextIssue);
+function ReadyContent() {
+  const { connection } = useActiveConnection();
+  const ready = useKataPromise(listReadyIssues, []);
+  const next = useKataPromise(nextIssue, []);
   const refresh = () => {
     ready.revalidate();
     next.revalidate();
@@ -49,6 +56,7 @@ export default function Command() {
               shortcut={Keyboard.Shortcut.Common.Refresh}
               onAction={refresh}
             />
+            <ConnectionActions />
           </ActionPanel>
         }
       />
@@ -56,11 +64,23 @@ export default function Command() {
   }
 
   return (
-    <List isLoading={ready.isLoading || next.isLoading} searchBarPlaceholder="Filter ready issues…">
+    <List
+      navigationTitle={connectionTitle(connection)}
+      isLoading={ready.isLoading || next.isLoading}
+      searchBarPlaceholder="Filter ready issues…"
+    >
       {next.data && <List.Section title="Next Up">{renderItem(next.data, "next")}</List.Section>}
       <List.Section title="Ready" subtitle={ready.data ? String(ready.data.length) : undefined}>
         {ready.data?.map((issue) => renderItem(issue, "ready"))}
       </List.Section>
     </List>
+  );
+}
+
+export default function Command() {
+  return (
+    <ConnectionGate>
+      <ReadyContent />
+    </ConnectionGate>
   );
 }

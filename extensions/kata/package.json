@@ -62,38 +62,13 @@
       "subtitle": "Kata",
       "description": "Read-only view of cron jobs, runs, workflows, teams, tokens and daemon health.",
       "mode": "view"
-    }
-  ],
-  "preferences": [
-    {
-      "name": "kataPath",
-      "type": "textfield",
-      "required": false,
-      "title": "Kata Binary",
-      "description": "Path to the kata executable. Leave empty to find kata on your PATH.",
-      "default": "/opt/homebrew/bin/kata"
     },
     {
-      "name": "serverUrl",
-      "type": "textfield",
-      "required": false,
-      "title": "Server URL",
-      "description": "URL of a remote kata daemon, for example one reached over Tailscale (http://100.x.y.z:7777). Leave empty to use the local daemon.",
-      "placeholder": "http://100.x.y.z:7777"
-    },
-    {
-      "name": "authToken",
-      "type": "password",
-      "required": false,
-      "title": "Auth Token",
-      "description": "Identity token for the remote daemon, created with `kata tokens create`."
-    },
-    {
-      "name": "actor",
-      "type": "textfield",
-      "required": false,
-      "title": "Actor",
-      "description": "Your actor name, used as the author of changes and for the inbox. Leave empty to let kata resolve it."
+      "name": "manage-connections",
+      "title": "Manage Connections",
+      "subtitle": "Kata",
+      "description": "Add, edit, test and switch between the kata servers this extension connects to.",
+      "mode": "view"
     }
   ],
   "dependencies": {

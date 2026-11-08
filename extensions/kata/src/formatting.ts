@@ -1,4 +1,4 @@
-import { AdminItem, DigestTotals, InboxRequest, Issue, PlanningDates } from "./kata";
+import { AdminItem, DigestTotals, Issue, PlanningDates } from "./kata";
 
 export function formatLocalDate(date: Date): string {
   const year = String(date.getFullYear()).padStart(4, "0");
@@ -15,15 +15,6 @@ export function formatTotals(totals: DigestTotals): string[] {
 
 export function windowStart(hours: number, now: Date): string {
   return new Date(now.getTime() - hours * 60 * 60 * 1000).toISOString().replace(/\.\d+Z$/, "Z");
-}
-
-export function requestRef(request: InboxRequest): string | undefined {
-  if (request.qualified_id) return request.qualified_id;
-  const project = request.project_name ?? request.project;
-  const shortId = request.short_id ?? request.issue_short_id;
-  if (project && shortId) return `${project}#${shortId}`;
-  if (request.issue?.includes("#")) return request.issue;
-  return undefined;
 }
 
 export function planningRows(issue: Issue, dates: PlanningDates | undefined): { title: string; text: string }[] {

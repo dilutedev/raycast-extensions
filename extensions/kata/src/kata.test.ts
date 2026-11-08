@@ -1,390 +1,500 @@
-import { execFile } from "child_process";
-import { getPreferenceValues } from "@raycast/api";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Connection } from "./connections";
 import {
-  addIssueLabel,
   addIssueRelation,
-  assignIssue,
-  claimIssue,
+  clearIssueRequest,
   closeIssue,
-  commentIssue,
   createIssue,
+  currentActor,
   deleteIssue,
   editIssue,
-  kata,
+  encodeBase64Url,
+  listInbox,
   listIssues,
-  listProjectIssues,
   listProjects,
   moveIssue,
-  NewIssue,
+  nextIssue,
+  notifyIssue,
+  parseEvidence,
   removeIssueLabel,
   removeIssueRelation,
-  reopenIssue,
+  request,
   searchIssues,
   setIssueAttention,
   setIssueDeadline,
   setIssuePriority,
   showDigest,
   showIssue,
-  unassignIssue,
+  splitRef,
+  testConnection,
 } from "./kata";
 
-vi.mock("@raycast/api", () => ({ getPreferenceValues: vi.fn(() => ({ kataPath: "/test/kata" })) }));
-vi.mock("child_process", () => ({ execFile: vi.fn() }));
+const storage = vi.hoisted(() => new Map<string, string>());
 
-type ExecCallback = (error: Error | null, stdout: string, stderr: string) => void;
+vi.mock("@raycast/api", () => ({
+  LocalStorage: {
+    getItem: vi.fn(async (key: string) => storage.get(key)),
+    setItem: vi.fn(async (key: string, value: string) => {
+      storage.set(key, value);
+    }),
+    removeItem: vi.fn(async (key: string) => {
+      storage.delete(key);
+    }),
+  },
+}));
 
-function respond(result: { error?: Error; stdout?: string; stderr?: string } = {}) {
-  const end = vi.fn();
-  vi.mocked(execFile).mockImplementationOnce(((_file: string, _args: string[], _opts: object, cb: ExecCallback) => {
-    queueMicrotask(() => cb(result.error ?? null, result.stdout ?? "{}", result.stderr ?? ""));
-    return { stdin: { end } };
-  }) as unknown as typeof execFile);
-  return { end };
+const SERVER = "http://100.1.2.3:7777";
+const projects = [
+  { id: 22, uid: "UID22", name: "p" },
+  { id: 23, uid: "UID23", name: "q" },
+];
+
+const fetchMock = vi.fn();
+
+function jsonResponse(body: unknown, init: { status?: number; statusText?: string } = {}) {
+  return new Response(JSON.stringify(body), { status: init.status ?? 200, statusText: init.statusText });
+}
+
+function stubFetch(handler: (url: URL, init: RequestInit) => unknown = () => ({})) {
+  fetchMock.mockImplementation(async (url: URL, init: RequestInit) => {
+    if (url.pathname === "/api/v1/projects") return jsonResponse({ projects });
+    const result = handler(url, init);
+    return result instanceof Response ? result : jsonResponse(result);
+  });
+}
+
+function sentCalls() {
+  return fetchMock.mock.calls
+    .map(([url, init]) => ({ url: url as URL, init: init as RequestInit }))
+    .filter(({ url }) => url.pathname !== "/api/v1/projects");
 }
 
 function lastCall() {
-  const [file, args, opts] = vi.mocked(execFile).mock.calls[0] as unknown as [
-    string,
-    string[],
-    { maxBuffer: number; env: { PATH: string } },
-  ];
-  return { file, args, opts };
+  const calls = sentCalls();
+  const { url, init } = calls[calls.length - 1];
+  return {
+    method: init.method,
+    path: url.pathname + url.search,
+    headers: init.headers as Record<string, string>,
+    body: init.body === undefined ? undefined : JSON.parse(init.body as string),
+  };
 }
 
-beforeEach(() => {
-  vi.mocked(execFile).mockReset();
+function setConnection(overrides: Partial<Connection> = {}) {
+  const connection: Connection = {
+    id: "conn-1",
+    name: "Personal",
+    serverUrl: SERVER,
+    authToken: "secret",
+    actor: "andy",
+    ...overrides,
+  };
+  storage.set("connections", JSON.stringify([connection]));
+  storage.set("activeConnectionId", connection.id);
+  return connection;
+}
+
+beforeEach(async () => {
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
+  storage.clear();
+  setConnection();
+  stubFetch();
+  await listProjects().catch(() => undefined);
 });
 
-describe("kata()", () => {
-  it("resolves with parsed stdout JSON", async () => {
-    respond({ stdout: '{"a":1}' });
-    await expect(kata(["x"])).resolves.toEqual({ a: 1 });
-  });
-
-  it("calls execFile with the preference path, --json, buffer limit and extended PATH", async () => {
-    respond();
-    await kata(["list", "foo"]);
-    const { file, args, opts } = lastCall();
-    expect(file).toBe("/test/kata");
-    expect(args).toEqual(["list", "foo", "--json"]);
-    expect(opts.maxBuffer).toBe(64 * 1024 * 1024);
-    expect(opts.env.PATH.startsWith("/opt/homebrew/bin:/usr/local/bin:")).toBe(true);
-  });
-
-  it("passes remote server preferences to the child environment only when set", async () => {
-    vi.mocked(getPreferenceValues).mockReturnValueOnce({
-      kataPath: "/test/kata",
-      serverUrl: "http://100.1.2.3:7777",
-      authToken: "secret",
-      actor: "andy",
-    });
-    respond();
-    await kata(["x"]);
-    const { opts } = lastCall();
-    expect(opts.env).toMatchObject({
-      KATA_SERVER: "http://100.1.2.3:7777",
-      KATA_AUTH_TOKEN: "secret",
-      KATA_AUTHOR: "andy",
-    });
-
-    vi.mocked(execFile).mockReset();
-    vi.mocked(getPreferenceValues).mockReturnValueOnce({ kataPath: "/test/kata", serverUrl: "", actor: "" });
-    respond();
-    await kata(["x"]);
-    expect(Object.keys(lastCall().opts.env)).not.toContain("KATA_SERVER");
-    expect(Object.keys(lastCall().opts.env)).not.toContain("KATA_AUTHOR");
-  });
-
-  it("falls back to 'kata' when the preference is empty", async () => {
-    vi.mocked(getPreferenceValues).mockReturnValueOnce({ kataPath: "" });
-    respond();
-    await kata(["x"]);
-    expect(lastCall().file).toBe("kata");
-  });
-
+describe("pure helpers", () => {
   it.each([
-    ["a body", "body"],
-    ["the empty string", ""],
-  ])("passes stdin to the child when given %s", async (_name, stdin) => {
-    const { end } = respond();
-    await kata(["x"], stdin);
-    expect(end).toHaveBeenCalledExactlyOnceWith(stdin);
+    ["someone", "c29tZW9uZQ"],
+    ["dilutedev", "ZGlsdXRlZGV2"],
+  ])("encodeBase64Url(%s)", (text, expected) => {
+    expect(encodeBase64Url(text)).toBe(expected);
   });
 
-  it("does not touch stdin when omitted", async () => {
-    const { end } = respond();
-    await kata(["x"]);
-    expect(end).not.toHaveBeenCalled();
+  it("splitRef splits on the last hash", () => {
+    expect(splitRef("wup-be#fb5j")).toEqual({ project: "wup-be", shortId: "fb5j" });
+    expect(() => splitRef("fb5j")).toThrow("Invalid issue reference");
   });
 
-  describe("errors", () => {
-    const fail = new Error("Command failed");
-
-    it("rejects with the JSON error message from stdout", async () => {
-      respond({ error: fail, stdout: '{"error":{"message":"boom"}}' });
-      await expect(kata(["x"])).rejects.toThrow("boom");
+  describe("parseEvidence", () => {
+    it("maps each typed entry to its API field", () => {
+      expect(
+        parseEvidence(
+          "commit:abc, pr:https://x/1, test:go test ./..., reviewed-paths:src/a.go, external:acme, no-change-audit:nothing to do, duplicate-of:p#d4ex, superseded-by:p#e5fx, attachment:att1",
+        ),
+      ).toEqual([
+        { type: "commit", sha: "abc" },
+        { type: "pr", url: "https://x/1" },
+        { type: "test", command: "go test ./..." },
+        { type: "reviewed-paths", paths: ["src/a.go"] },
+        { type: "external", account: "acme" },
+        { type: "no-change-audit", rationale: "nothing to do" },
+        { type: "duplicate-of", issue_ref: "p#d4ex" },
+        { type: "superseded-by", issue_ref: "p#e5fx" },
+        { type: "attachment", attachment_id: "att1" },
+      ]);
     });
 
-    it("prefers stdout over a non-empty stderr", async () => {
-      respond({ error: fail, stdout: '{"error":{"message":"boom"}}', stderr: "noise" });
-      await expect(kata(["x"])).rejects.toThrow("boom");
+    it("accepts newline separators and keeps commas inside a value", () => {
+      expect(parseEvidence("test:a, b\ncommit:abc")).toEqual([
+        { type: "test", command: "a,b" },
+        { type: "commit", sha: "abc" },
+      ]);
     });
 
-    it("falls back to stderr when the JSON has no error key", async () => {
-      respond({ error: fail, stdout: "{}", stderr: "bad thing\n" });
-      await expect(kata(["x"])).rejects.toThrow(/^bad thing$/);
+    it("returns nothing for blank text", () => {
+      expect(parseEvidence("  ")).toEqual([]);
     });
 
-    it("falls back to trimmed stderr when stdout is not JSON", async () => {
-      respond({ error: fail, stdout: "not json", stderr: "  oops \n" });
-      await expect(kata(["x"])).rejects.toThrow(/^oops$/);
+    it.each(["bogus:x", "justtext", "commit:"])("rejects %s", (text) => {
+      expect(() => parseEvidence(text)).toThrow("Invalid evidence");
     });
+  });
+});
 
-    it("falls back to the exec error message when stderr is empty", async () => {
-      respond({ error: fail, stdout: "not json", stderr: "" });
-      await expect(kata(["x"])).rejects.toThrow("Command failed");
+describe("request()", () => {
+  it("uses the active connection URL and token", async () => {
+    setConnection({ authToken: "tok" });
+    stubFetch(() => ({ a: 1 }));
+    await expect(request("GET", "/thing", { query: { x: 1, skipped: undefined } })).resolves.toEqual({ a: 1 });
+    expect(lastCall()).toEqual({
+      method: "GET",
+      path: "/api/v1/thing?x=1",
+      headers: { Authorization: "Bearer tok", "Content-Type": "application/json" },
+      body: undefined,
     });
+    expect((fetchMock.mock.calls.at(-1)?.[0] as URL).origin).toBe(SERVER);
+  });
+
+  it("sends no Authorization header when the connection has no token", async () => {
+    setConnection({ authToken: undefined });
+    stubFetch();
+    await request("GET", "/thing");
+    expect(lastCall().headers).toEqual({ "Content-Type": "application/json" });
+  });
+
+  it("lets an explicit connection override the active one", async () => {
+    stubFetch();
+    const other: Connection = { id: "conn-2", name: "Team", serverUrl: "http://10.0.0.9:7777", authToken: "teamtoken" };
+    await request("GET", "/thing", { connection: other });
+    const [url, init] = fetchMock.mock.calls.at(-1) as [URL, RequestInit];
+    expect(url.origin).toBe("http://10.0.0.9:7777");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer teamtoken");
+  });
+
+  it("follows the active connection when it changes", async () => {
+    setConnection({ id: "conn-3", serverUrl: "http://10.0.0.3:7777" });
+    await request("GET", "/thing");
+    expect((fetchMock.mock.calls.at(-1)?.[0] as URL).origin).toBe("http://10.0.0.3:7777");
+  });
+
+  it("fails clearly when no connection exists", async () => {
+    storage.clear();
+    await expect(request("GET", "/thing")).rejects.toThrow("Manage Connections");
+  });
+
+  it("caches projects per connection", async () => {
+    storage.clear();
+    const first: Connection = { id: "a", name: "A", serverUrl: "http://a:1", authToken: "ta" };
+    const second: Connection = { id: "b", name: "B", serverUrl: "http://b:1", authToken: "tb" };
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async (url: URL) =>
+      jsonResponse({ projects: [{ id: url.origin === "http://a:1" ? 1 : 2, uid: "u", name: "x" }] }),
+    );
+    expect((await listProjects(first))[0].id).toBe(1);
+    expect((await listProjects(second))[0].id).toBe(2);
+    expect((await listProjects(first))[0].id).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("tests a connection with health and then an authenticated projects call", async () => {
+    stubFetch();
+    const candidate: Connection = { id: "t", name: "T", serverUrl: "http://t:1", authToken: "ttoken" };
+    fetchMock.mockClear();
+    await testConnection(candidate);
+    const urls = fetchMock.mock.calls.map(([url]) => (url as URL).pathname);
+    expect(urls).toEqual(["/api/v1/health", "/api/v1/projects"]);
+    expect((fetchMock.mock.calls[1][1] as RequestInit).headers).toMatchObject({ Authorization: "Bearer ttoken" });
+  });
+
+  it("maps 401 to an auth token message", async () => {
+    stubFetch(() => jsonResponse({ error: { message: "nope" } }, { status: 401 }));
+    await expect(request("GET", "/x")).rejects.toThrow(
+      'Kata rejected the auth token for connection "Personal" — check it in Manage Connections',
+    );
+  });
+
+  it("throws the error envelope message", async () => {
+    stubFetch(() => jsonResponse({ error: { message: "boom" } }, { status: 400 }));
+    await expect(request("GET", "/x")).rejects.toThrow("boom");
+  });
+
+  it("falls back to the HTTP status", async () => {
+    stubFetch(() => new Response("<html>", { status: 502, statusText: "Bad Gateway" }));
+    await expect(request("GET", "/x")).rejects.toThrow("HTTP 502 Bad Gateway");
+  });
+
+  it("reports an unreachable server", async () => {
+    fetchMock.mockRejectedValue(new TypeError("fetch failed"));
+    await expect(request("GET", "/x")).rejects.toThrow(
+      `The kata server at ${SERVER} (connection "Personal") is unreachable`,
+    );
+    await expect(request("GET", "/x")).rejects.toThrow("Tailscale");
   });
 });
 
 describe("wrappers", () => {
   it.each([
-    ["open", ["list", "--all", "--status", "open", "--limit", "0", "--json"]],
-    ["closed", ["list", "--all", "--status", "closed", "--limit", "0", "--json"]],
-    ["all", ["list", "--all", "--status", "all", "--limit", "0", "--json"]],
-  ] as const)("listIssues(%s)", async (status, expected) => {
-    respond({ stdout: '{"issues":[{"uid":"u"}]}' });
-    await expect(listIssues(status)).resolves.toEqual([{ uid: "u" }]);
-    expect(lastCall().args).toEqual(expected);
+    ["open", "/api/v1/issues?status=open"],
+    ["closed", "/api/v1/issues?status=closed"],
+    ["all", "/api/v1/issues"],
+  ] as const)("listIssues(%s)", async (status, path) => {
+    stubFetch(() => ({ issues: [] }));
+    await expect(listIssues(status)).resolves.toEqual([]);
+    expect(lastCall()).toMatchObject({ method: "GET", path });
   });
 
-  it("listProjectIssues", async () => {
-    respond({ stdout: '{"issues":[]}' });
-    await expect(listProjectIssues("p")).resolves.toEqual([]);
-    expect(lastCall().args).toEqual(["list", "--project", "p", "--status", "open", "--limit", "0", "--json"]);
+  it("showIssue resolves the project id and uses the short id", async () => {
+    await showIssue("p#fb5j");
+    expect(lastCall()).toMatchObject({ method: "GET", path: "/api/v1/projects/22/issues/fb5j" });
   });
 
-  it("listProjects", async () => {
-    respond({ stdout: '{"projects":[{"name":"p"}]}' });
-    await expect(listProjects()).resolves.toEqual([{ name: "p" }]);
-    expect(lastCall().args).toEqual(["projects", "list", "--json"]);
-  });
-
-  it("showIssue", async () => {
-    respond({ stdout: '{"issue":{},"comments":[]}' });
-    await expect(showIssue("r")).resolves.toEqual({ issue: {}, comments: [] });
-    expect(lastCall().args).toEqual(["show", "r", "--json"]);
-  });
-
-  describe("createIssue", () => {
-    const base: NewIssue = {
+  it("createIssue sends parent and blocked-by links", async () => {
+    await createIssue({
       project: "p",
       title: "T",
       body: "B",
+      priority: "2",
+      labels: ["x"],
+      owner: "y",
+      parent: "p#fb5j",
+      blockedBy: ["p#hsz5"],
+    });
+    expect(lastCall()).toMatchObject({
+      method: "POST",
+      path: "/api/v1/projects/22/issues",
+      body: {
+        actor: "andy",
+        body: "B",
+        labels: ["x"],
+        links: [
+          { to_ref: "fb5j", type: "parent" },
+          { incoming: true, to_ref: "hsz5", type: "blocks" },
+        ],
+        owner: "y",
+        priority: 2,
+        title: "T",
+      },
+    });
+  });
+
+  it("createIssue omits optional fields and the actor when unset", async () => {
+    setConnection({ actor: undefined });
+    await createIssue({
+      project: "p",
+      title: "T",
+      body: "",
       priority: "",
       labels: [],
       owner: "",
       parent: "",
       blockedBy: [],
-    };
-
-    it("sends only required fields, with the body on stdin", async () => {
-      const { end } = respond();
-      await createIssue(base);
-      expect(lastCall().args).toEqual(["create", "T", "--project", "p", "--body-stdin", "--json"]);
-      expect(end).toHaveBeenCalledWith("B");
     });
-
-    it("sends the empty body on stdin so --body-stdin does not hang", async () => {
-      const { end } = respond();
-      await createIssue({ ...base, body: "" });
-      expect(end).toHaveBeenCalledWith("");
-    });
-
-    it("appends every optional field in source order", async () => {
-      respond();
-      await createIssue({
-        ...base,
-        priority: "1",
-        labels: ["a", "b"],
-        owner: "alice",
-        parent: "par",
-        blockedBy: ["x", "y"],
-      });
-      expect(lastCall().args).toEqual([
-        "create",
-        "T",
-        "--project",
-        "p",
-        "--body-stdin",
-        "--priority",
-        "1",
-        "--label",
-        "a",
-        "--label",
-        "b",
-        "--owner",
-        "alice",
-        "--parent",
-        "par",
-        "--blocked-by",
-        "x",
-        "--blocked-by",
-        "y",
-        "--json",
-      ]);
-    });
+    expect(lastCall().body).toEqual({ title: "T", body: "" });
   });
 
-  it("commentIssue sends the body on stdin", async () => {
-    const { end } = respond();
-    await commentIssue("r", "hi");
-    expect(lastCall().args).toEqual(["comment", "r", "--body-stdin", "--json"]);
-    expect(end).toHaveBeenCalledWith("hi");
-  });
-
-  describe("closeIssue", () => {
-    it("omits --evidence when empty", async () => {
-      respond();
-      await closeIssue("r", "x", "m", "");
-      expect(lastCall().args).toEqual(["close", "r", "--reason", "x", "--message", "m", "--json"]);
-    });
-
-    it("appends --evidence when given", async () => {
-      respond();
-      await closeIssue("r", "x", "m", "e");
-      expect(lastCall().args).toEqual(["close", "r", "--reason", "x", "--message", "m", "--evidence", "e", "--json"]);
-    });
-  });
-
-  describe("editIssue", () => {
-    it.each([
-      ["title only", { title: "T" }, ["edit", "r", "--title=T", "--json"]],
-      ["body only", { body: "B" }, ["edit", "r", "--body=B", "--json"]],
-      ["title before body", { body: "B", title: "T" }, ["edit", "r", "--title=T", "--body=B", "--json"]],
-      ["no changes", {}, ["edit", "r", "--json"]],
-      ["a dash-prefixed title as a value", { title: "-x" }, ["edit", "r", "--title=-x", "--json"]],
-      ["an empty body", { body: "" }, ["edit", "r", "--body=", "--json"]],
-    ])("%s", async (_name, changes, expected) => {
-      respond();
-      await editIssue("r", changes);
-      expect(lastCall().args).toEqual(expected);
-    });
-
-    it("passes the body inline, not on stdin", async () => {
-      const { end } = respond();
-      await editIssue("r", { body: "B" });
-      expect(end).not.toHaveBeenCalled();
+  it("editIssue patches the title and body", async () => {
+    await editIssue("p#fb5j", { title: "T", body: "B" });
+    expect(lastCall()).toMatchObject({
+      method: "PATCH",
+      path: "/api/v1/projects/22/issues/fb5j",
+      body: { actor: "andy", title: "T", body: "B" },
     });
   });
 
   it.each([
-    [2, "--priority=2"],
-    [0, "--priority=0"],
-    [undefined, "--priority=-"],
-  ])("setIssuePriority(%s)", async (priority, flag) => {
-    respond();
-    await setIssuePriority("r", priority);
-    expect(lastCall().args).toEqual(["edit", "r", flag, "--json"]);
+    [1, { set_priority: 1 }],
+    [0, { set_priority: 0 }],
+    [undefined, { clear_priority: true }],
+  ])("setIssuePriority(%s)", async (priority, expected) => {
+    await setIssuePriority("p#fb5j", priority);
+    expect(lastCall().body).toEqual({ actor: "andy", ...expected });
   });
 
   it.each([
-    ["claimIssue", () => claimIssue("r"), ["claim", "r", "--json"]],
-    ["reopenIssue", () => reopenIssue("r"), ["reopen", "r", "--json"]],
-    ["assignIssue", () => assignIssue("r", "alice"), ["assign", "r", "alice", "--json"]],
-    ["unassignIssue", () => unassignIssue("r"), ["unassign", "r", "--json"]],
-    ["addIssueLabel", () => addIssueLabel("r", "l"), ["label", "add", "r", "l", "--json"]],
-    ["removeIssueLabel", () => removeIssueLabel("r", "l"), ["label", "rm", "r", "l", "--json"]],
-  ])("%s", async (_name, call, expected) => {
-    const { end } = respond();
-    await call();
-    expect(lastCall().args).toEqual(expected);
-    expect(end).not.toHaveBeenCalled();
+    ["parent", { set_parent: "hsz5" }],
+    ["blocked-by", { add_blocked_by: ["hsz5"] }],
+    ["blocks", { add_blocks: ["hsz5"] }],
+    ["related", { add_related: ["hsz5"] }],
+  ] as const)("addIssueRelation(%s)", async (kind, delta) => {
+    await addIssueRelation("p#fb5j", kind, "p#hsz5");
+    expect(lastCall()).toMatchObject({ method: "PATCH", body: { actor: "andy", links_delta: delta } });
   });
 
-  describe("issue relations", () => {
-    it.each([
-      ["parent", "--parent=t"],
-      ["blocked-by", "--blocked-by=t"],
-      ["blocks", "--blocks=t"],
-      ["related", "--related=t"],
-    ] as const)("addIssueRelation(%s)", async (kind, flag) => {
-      respond();
-      await addIssueRelation("r", kind, "t");
-      expect(lastCall().args).toEqual(["edit", "r", flag, "--json"]);
+  it.each([
+    ["parent", { remove_parent: "hsz5" }],
+    ["blocked-by", { remove_blocked_by: ["hsz5"] }],
+    ["blocks", { remove_blocks: ["hsz5"] }],
+    ["related", { remove_related: ["hsz5"] }],
+  ] as const)("removeIssueRelation(%s)", async (kind, delta) => {
+    await removeIssueRelation("p#fb5j", kind, "p#hsz5");
+    expect(lastCall().body).toEqual({ actor: "andy", links_delta: delta });
+  });
+
+  it("keeps the qualified reference for a relation in another project", async () => {
+    await addIssueRelation("p#fb5j", "related", "q#abcd");
+    expect(lastCall().body.links_delta).toEqual({ add_related: ["q#abcd"] });
+  });
+
+  it("closeIssue sends typed evidence", async () => {
+    await closeIssue("p#fb5j", "done", "m", "commit:abc");
+    expect(lastCall()).toMatchObject({
+      method: "POST",
+      path: "/api/v1/projects/22/issues/fb5j/actions/close",
+      body: {
+        actor: "andy",
+        dry_run: false,
+        evidence: [{ sha: "abc", type: "commit" }],
+        message: "m",
+        reason: "done",
+      },
+    });
+  });
+
+  it("closeIssue omits evidence when empty and rejects invalid evidence before sending", async () => {
+    await closeIssue("p#fb5j", "wontfix", "m", "");
+    expect(lastCall().body).not.toHaveProperty("evidence");
+    const callsBefore = sentCalls().length;
+    await expect(closeIssue("p#fb5j", "done", "m", "nonsense")).rejects.toThrow("Invalid evidence");
+    expect(sentCalls()).toHaveLength(callsBefore);
+  });
+
+  it("removeIssueLabel is a DELETE with the actor in the query", async () => {
+    await removeIssueLabel("p#fb5j", "needs review");
+    expect(lastCall()).toEqual({
+      method: "DELETE",
+      path: "/api/v1/projects/22/issues/fb5j/labels/needs%20review?actor=andy",
+      headers: expect.any(Object),
+      body: undefined,
+    });
+  });
+
+  it("removeIssueLabel omits the actor query when unset", async () => {
+    setConnection({ actor: undefined });
+    await removeIssueLabel("p#fb5j", "lbl");
+    expect(lastCall().path).toBe("/api/v1/projects/22/issues/fb5j/labels/lbl");
+  });
+
+  it("setIssueDeadline clears with null", async () => {
+    await setIssueDeadline("p#fb5j", undefined);
+    expect(lastCall()).toMatchObject({
+      method: "POST",
+      path: "/api/v1/projects/22/issues/fb5j/metadata",
+      body: { actor: "andy", patch: { deadline_on: null } },
+    });
+  });
+
+  it("setIssueAttention patches the attention message only when given", async () => {
+    await setIssueAttention("p#fb5j", "stuck", "waiting");
+    expect(lastCall().body.patch).toEqual({ "work.attention": "stuck", "work.attention_msg": "waiting" });
+    await setIssueAttention("p#fb5j", "ok", "");
+    expect(lastCall().body.patch).toEqual({ "work.attention": "ok" });
+  });
+
+  it("notifyIssue and clearIssueRequest patch the notify key", async () => {
+    await notifyIssue("p#fb5j", "someone", "hi");
+    expect(lastCall().body).toEqual({
+      actor: "andy",
+      patch: { "notify.c29tZW9uZQ": { from: "andy", message: "hi" } },
+    });
+    await clearIssueRequest("p#fb5j", "someone");
+    expect(lastCall().body).toEqual({ actor: "andy", patch: { "notify.c29tZW9uZQ": null } });
+  });
+
+  it("notifyIssue omits from and actor when the connection has no actor", async () => {
+    setConnection({ actor: undefined });
+    await notifyIssue("p#fb5j", "someone", "hi");
+    expect(lastCall().body).toEqual({ patch: { "notify.c29tZW9uZQ": { message: "hi" } } });
+  });
+
+  it.each([
+    [false, { to_project_uid: "UID23" }],
+    [true, { single: true, to_project_uid: "UID23" }],
+  ])("moveIssue(single=%s)", async (single, expected) => {
+    await moveIssue("p#fb5j", "q", single);
+    expect(lastCall()).toMatchObject({
+      method: "POST",
+      path: "/api/v1/projects/22/issues/fb5j/actions/move",
+      body: { actor: "andy", ...expected },
+    });
+  });
+
+  it("deleteIssue sends the actor, falling back to the instance actor", async () => {
+    await deleteIssue("p#fb5j");
+    expect(lastCall()).toMatchObject({
+      path: "/api/v1/projects/22/issues/fb5j/actions/delete",
+      body: { actor: "andy" },
     });
 
-    it.each([
-      ["parent", "--remove-parent=t"],
-      ["blocked-by", "--remove-blocked-by=t"],
-      ["blocks", "--remove-blocks=t"],
-      ["related", "--remove-related=t"],
-    ] as const)("removeIssueRelation(%s)", async (kind, flag) => {
-      respond();
-      await removeIssueRelation("r", kind, "t");
-      expect(lastCall().args).toEqual(["edit", "r", flag, "--json"]);
-    });
+    setConnection({ actor: undefined });
+    stubFetch((url) => (url.pathname === "/api/v1/instance" ? { auth: { kind: "token", actor: "tokenactor" } } : {}));
+    await deleteIssue("p#fb5j");
+    expect(lastCall().body).toEqual({ actor: "tokenactor" });
+  });
+
+  it("searchIssues sends status only when filtered", async () => {
+    stubFetch(() => ({ results: [{ issue: { uid: "u" } }] }));
+    await expect(searchIssues("cookie", "p", "open", true)).resolves.toEqual([{ issue: { uid: "u" } }]);
+    expect(lastCall().path).toBe("/api/v1/projects/22/search?q=cookie&limit=50&status=open&include_deleted=true");
+    await searchIssues("cookie", "p", "all", false);
+    expect(lastCall().path).toBe("/api/v1/projects/22/search?q=cookie&limit=50&include_deleted=false");
+  });
+
+  it("nextIssue asks for one issue sorted by priority", async () => {
+    stubFetch(() => ({ issues: [{ uid: "u" }] }));
+    await expect(nextIssue()).resolves.toEqual({ uid: "u" });
+    expect(lastCall().path).toBe("/api/v1/ready?limit=1&sort=priority");
+    stubFetch(() => ({ issues: [] }));
+    await expect(nextIssue()).resolves.toBeNull();
+  });
+
+  it.each([
+    [undefined, "/api/v1/digest"],
+    [22, "/api/v1/projects/22/digest"],
+  ])("showDigest(project id %s) sends RFC3339 since and until", async (projectId, path) => {
+    await showDigest("7d", projectId);
+    const url = new URL(`${SERVER}${lastCall().path}`);
+    expect(url.pathname).toBe(path);
+    const since = Date.parse(url.searchParams.get("since") as string);
+    const until = Date.parse(url.searchParams.get("until") as string);
+    expect(until - since).toBe(7 * 24 * 60 * 60 * 1000);
+    expect(url.searchParams.get("since")).toMatch(/Z$/);
   });
 });
 
-describe("planning, search and admin wrappers", () => {
-  it("setIssueDeadline sends - to clear", async () => {
-    respond();
-    await setIssueDeadline("p#abcd", undefined);
-    expect(lastCall().args).toEqual(["deadline", "p#abcd", "-", "--json"]);
-  });
-
-  it("setIssueAttention writes the message only when given", async () => {
-    respond();
-    respond();
-    await setIssueAttention("p#abcd", "stuck", "waiting on review");
-    const argsOfCalls = vi.mocked(execFile).mock.calls.map((c) => c[1]);
-    expect(argsOfCalls).toEqual([
-      ["meta", "set", "p#abcd", "work.attention", "stuck", "--json"],
-      ["meta", "set", "p#abcd", "work.attention_msg", "waiting on review", "--json"],
+describe("inbox", () => {
+  it("queries open issues by notify metadata and maps sender and message", async () => {
+    stubFetch(() => ({
+      issues: [
+        {
+          qualified_id: "p#fb5j",
+          title: "T",
+          metadata: { "notify.c29tZW9uZQ": { from: "andy", message: "look" } },
+        },
+      ],
+    }));
+    await expect(listInbox("someone")).resolves.toEqual([
+      { qualified_id: "p#fb5j", title: "T", from: "andy", message: "look" },
     ]);
-
-    vi.mocked(execFile).mockReset();
-    respond();
-    await setIssueAttention("p#abcd", "ok", "");
-    expect(vi.mocked(execFile).mock.calls).toHaveLength(1);
+    expect(lastCall().path).toBe("/api/v1/issues?limit=0&status=open&meta=notify.c29tZW9uZQ");
   });
 
-  it("deleteIssue confirms with the exact qualified id", async () => {
-    respond();
-    await deleteIssue("p#abcd");
-    expect(lastCall().args).toEqual(["delete", "p#abcd", "--force", "--confirm", "DELETE p#abcd", "--json"]);
-  });
-
-  it.each([
-    [false, ["move", "p#abcd", "q", "--json"]],
-    [true, ["move", "p#abcd", "q", "--single", "--json"]],
-  ])("moveIssue(single=%s)", async (single, expected) => {
-    respond();
-    await moveIssue("p#abcd", "q", single);
-    expect(lastCall().args).toEqual(expected);
-  });
-
-  it.each([
-    ["all", false, ["search", "q", "--project", "p", "--limit", "50", "--json"]],
-    [
-      "open",
-      true,
-      ["search", "q", "--project", "p", "--limit", "50", "--status", "open", "--include-deleted", "--json"],
-    ],
-  ] as const)("searchIssues(status=%s, includeDeleted=%s)", async (status, includeDeleted, expected) => {
-    respond({ stdout: '{"results":[{"issue":{"uid":"u"}}]}' });
-    await expect(searchIssues("q", "p", status, includeDeleted)).resolves.toEqual([{ issue: { uid: "u" } }]);
-    expect(lastCall().args).toEqual(expected);
-  });
-
-  it.each([
-    [undefined, ["digest", "--all", "--since", "7d", "--json"]],
-    [22, ["digest", "--project-id", "22", "--since", "7d", "--json"]],
-  ])("showDigest(project id %s)", async (projectId, expected) => {
-    respond();
-    await showDigest("7d", projectId);
-    expect(lastCall().args).toEqual(expected);
+  it("currentActor prefers the token actor, then the connection actor", async () => {
+    stubFetch(() => ({ auth: { kind: "token", actor: "tokenactor" } }));
+    await expect(currentActor()).resolves.toBe("tokenactor");
+    stubFetch(() => ({ auth: { kind: "static_token" } }));
+    await expect(currentActor()).resolves.toBe("andy");
+    setConnection({ actor: undefined });
+    await expect(currentActor()).resolves.toBeUndefined();
   });
 });
