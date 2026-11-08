@@ -1,0 +1,119 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "kata",
+  "title": "Kata",
+  "description": "Browse, filter, create and manage issues in the kata local-first issue tracker.",
+  "icon": "extension-icon.png",
+  "author": "andy",
+  "categories": [
+    "Developer Tools",
+    "Productivity"
+  ],
+  "license": "MIT",
+  "platforms": [
+    "macOS"
+  ],
+  "commands": [
+    {
+      "name": "browse-issues",
+      "title": "Browse Issues",
+      "subtitle": "Kata",
+      "description": "Browse, filter and manage issues across all kata projects.",
+      "mode": "view"
+    },
+    {
+      "name": "create-issue",
+      "title": "Create Issue",
+      "subtitle": "Kata",
+      "description": "Create a new kata issue with priority, labels, owner and relations.",
+      "mode": "view"
+    },
+    {
+      "name": "inbox",
+      "title": "Inbox",
+      "subtitle": "Kata",
+      "description": "List the attention requests addressed to you across all kata projects and clear them.",
+      "mode": "view"
+    },
+    {
+      "name": "ready-issues",
+      "title": "Ready Issues",
+      "subtitle": "Kata",
+      "description": "List unblocked, unscheduled open issues across all projects, with the next issue to work on.",
+      "mode": "view"
+    },
+    {
+      "name": "search-issues",
+      "title": "Search Issues",
+      "subtitle": "Kata",
+      "description": "Full-text search over issue titles, bodies and comments in a kata project, including deleted issues.",
+      "mode": "view"
+    },
+    {
+      "name": "activity",
+      "title": "Activity",
+      "subtitle": "Kata",
+      "description": "Digest of recent changes, per-actor summaries, recent closes and label counts.",
+      "mode": "view"
+    },
+    {
+      "name": "kata-admin",
+      "title": "Kata Admin",
+      "subtitle": "Kata",
+      "description": "Read-only view of cron jobs, runs, workflows, teams, tokens and daemon health.",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "kataPath",
+      "type": "textfield",
+      "required": false,
+      "title": "Kata Binary",
+      "description": "Path to the kata executable. Leave empty to find kata on your PATH.",
+      "default": "/opt/homebrew/bin/kata"
+    },
+    {
+      "name": "serverUrl",
+      "type": "textfield",
+      "required": false,
+      "title": "Server URL",
+      "description": "URL of a remote kata daemon, for example one reached over Tailscale (http://100.x.y.z:7777). Leave empty to use the local daemon.",
+      "placeholder": "http://100.x.y.z:7777"
+    },
+    {
+      "name": "authToken",
+      "type": "password",
+      "required": false,
+      "title": "Auth Token",
+      "description": "Identity token for the remote daemon, created with `kata tokens create`."
+    },
+    {
+      "name": "actor",
+      "type": "textfield",
+      "required": false,
+      "title": "Actor",
+      "description": "Your actor name, used as the author of changes and for the inbox. Leave empty to let kata resolve it."
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.104.0",
+    "@raycast/utils": "^2.0.0"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^2.0.0",
+    "@types/node": "22.13.10",
+    "@types/react": "19.0.10",
+    "eslint": "^9.22.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.2",
+    "vitest": "^5.0.3"
+  },
+  "scripts": {
+    "build": "ray build -e dist",
+    "dev": "ray develop",
+    "fix-lint": "ray lint --fix",
+    "lint": "ray lint",
+    "test": "vitest run"
+  }
+}
